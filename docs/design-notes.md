@@ -1,7 +1,7 @@
-# What changed against the reference
+# Design notes
 
-Why this library differs from the reference implementation, what each change
-bought, and what is still open.
+Each deliberate difference from the reference implementation, what it bought,
+how the result is verified, and what is still open.
 
 [annealing-cop-approximator](https://github.com/LinoBugia/annealing-cop-approximator) holds the generic,
 dict-based PBF implementation: arbitrary degree, Markov-chain view, SA / SCA /
@@ -11,21 +11,21 @@ you still want it.
 
 ## This repository is standalone
 
-No module under `Funcs_Qubo_*` imports
-anything from the reference; the kernel and `qubo_min_solver` run with nothing
-but the packages listed in the [Quickstart](../README.md#quickstart). The reference is a
-*verification* dependency, needed only by `Test_Compare_Reference.py` and by
-the optional S8 block of `Bench_Performance.py` — both detect its absence and
-skip rather than fail.
+No module under `Funcs_Qubo_*` imports anything from the reference; the kernel
+and `qubo_min_solver` run with nothing but the packages listed in the
+[Requirements](../README.md#requirements). The reference is a *verification*
+dependency, needed only by `Test_Compare_Reference.py` and by the optional S8
+block of `Bench_Performance.py` — both detect its absence and skip rather than
+fail.
 
 Restricting the scope to degree 2 is what buys everything below.
 
 ## Storage: monomial dict → matrix
 
-The reference keeps a PBF as `{(i,j): coefficient}` plus a `pbf_var_dict` mapping each variable to the
-monomials containing it. Here the QUBO is a matrix, dense or CSR — and row `k`
-of `A` *is* the monomial list of `x_k`, so `pbf_var_dict` disappears entirely.
-Measured on random QUBOs of density 0.3:
+The reference keeps a PBF as `{(i,j): coefficient}` plus a `pbf_var_dict`
+mapping each variable to the monomials containing it. Here the QUBO is a
+matrix, dense or CSR — and row `k` of `A` *is* the monomial list of `x_k`, so
+`pbf_var_dict` disappears entirely. Measured on random QUBOs of density 0.3:
 
 | n | monomials | dict + var_dict | CSR | dense |
 |---|---|---|---|---|
@@ -36,62 +36,49 @@ Measured on random QUBOs of density 0.3:
 Roughly **8–11× less memory than the dict**, and at n=2000 the dict costs more
 than three times the *dense* matrix — Python object overhead dominates at
 ~180 bytes per monomial. This is what lifts the practical ceiling from a few
-thousand variables into the hundreds of thousands; the measured sizes are in
-[performance.md](performance.md#large-n-bounded-degree-via-csr).
+thousand variables to
+[262 144](performance.md#large-n-bounded-degree-via-csr).
 
 ## ΔE from a gradient, not monomial iteration
 
-With `G = X·A` the whole
-ΔE vector is `(1−2X)·(b+2G)`, and an accepted flip of bit `k` updates it with
-`G += s_k · A[k,:]`. The reference walks the monomial lists for the same
-result. This is also what makes the acceptance scan vectorisable.
+With `G = X·A` the whole ΔE vector is `(1−2X)·(b+2G)`, and an accepted flip of
+bit `k` updates it with `G += s_k · A[k,:]`. The reference walks the monomial
+lists for the same result. This is also what makes the acceptance scan
+vectorisable.
 
 ## All Monte-Carlo trials in one batch
 
-The reference runs `num_MC` trials in
-a Python loop; here they are one `(mc, n)` array, so extra trials cost far
-less than linear — see
+The reference runs `num_MC` trials in a Python loop; here they are one
+`(mc, n)` array, so extra trials cost far less than linear — see
 [the batching measurements](performance.md#monte-carlo-trials-batching-and-where-it-stops-paying).
 One flip per step *per trial* is preserved; the DA semantics are unchanged.
 
 ## Bulk RNG
 
-Random numbers are drawn in large blocks under a memory budget
-rather than one at a time, and the Metropolis test uses
-`standard_exponential` (accept iff `ΔE − offset < T·ε`) instead of
-`uniform + log`. RNG remains the single largest cost in a step — the measured
-share is in [performance.md](performance.md#where-the-time-goes).
+Random numbers are drawn in large blocks under a memory budget rather than one
+at a time, and the Metropolis test uses `standard_exponential` (accept iff
+`ΔE − offset < T·ε`) instead of `uniform + log`. RNG is still the single
+largest cost in a step, at [37–44%](performance.md#where-the-time-goes).
 
 ## A guard against float drift
 
-Updating `G` and `E` incrementally
-accumulates float64 rounding error over long runs, and the runs here are long.
-Every `recompute_every` steps both are reconstructed exactly from `X`, which is
-what keeps million-step runs trustworthy. What the guard costs is measured in
-[performance.md](performance.md#where-the-time-goes).
+Updating `G` and `E` incrementally accumulates float64 rounding error over long
+runs, and the runs here are long. Every `recompute_every` steps both are
+reconstructed exactly from `X`. At the default this costs about 6 µs per step
+— see [the measurement](performance.md#where-the-time-goes) — and it is the
+reason million-step runs stay trustworthy.
 
 ## One reference bug, deliberately not reproduced
 
-Min-tracking is seeded
-with the initial state. The reference returns an empty minimum assignment when
-no improvement ever occurs, which with a warm start is the normal case rather
-than an edge case.
+Min-tracking is seeded with the initial state. The reference returns an empty
+minimum assignment when no improvement ever occurs, which with a warm start is
+the normal case rather than an edge case.
 
-Measured net effect, and the per-proposal cost breakdown behind it, are in
-[performance.md](performance.md#against-the-reference-library).
+Net effect on the same problem (n=2000, density 0.3, one trial each):
+**≈41× per trial**, rising to **≈76×** once eight trials are batched — full
+table in [Against the reference library](performance.md#against-the-reference-library).
 
-# Roadmap
-
-- Multi-arm batching (block-diagonal QUBO per tree level, one flip per block,
-  min/offset per block) — also fixes the numpy dispatch overhead at small n
-- Cheaper flip selection: the `cumsum`+`argmax` over the mask is pure
-  bookkeeping and a measurable share of the step
-- GPU: CuPy as the `xp` backend — the RNG share and the remaining elementwise
-  work over `(mc,n)` are broken down in
-  [performance.md](performance.md#where-the-time-goes)
-- Docker image
-
-## Verification against the reference
+## Verification
 
 ```bash
 cd Code && python Test_Compare_Reference.py
@@ -110,3 +97,21 @@ git clone https://github.com/LinoBugia/annealing-cop-approximator
 
 Without it the script reports that and exits; nothing else in the project is
 affected.
+
+The RNG streams naturally differ from the reference, so the comparison is made
+over `E`/`ΔE` to machine precision and over trajectory statistics — not over
+identical paths.
+
+## Roadmap
+
+- Multi-arm batching (block-diagonal QUBO per tree level, one flip per block,
+  min/offset per block) — also fixes the numpy dispatch overhead at small n
+- Cheaper flip selection: the `cumsum`+`argmax` over the mask is 16–19% of the
+  step and is pure bookkeeping
+- A compound **(1,2)-swap** as an atomic move. On set packing every maximal
+  feasible packing is a strict local optimum under single flips, which is the
+  measured ceiling on `cdc7-4-3-2` — see
+  [MIPLIB — set packing](benchmarks.md#miplib--set-packing)
+- GPU: CuPy as the `xp` backend — RNG is 37–44% of the step and the remaining
+  work is elementwise over `(mc,n)`
+- Docker image

@@ -1,11 +1,13 @@
-# Configuration
+# Parameter reference
 
-Every parameter of `qubo_min_solver` and every cooling schedule type.
+Every parameter of `qubo_min_solver`, what the call returns, and every cooling
+schedule type. The two parameters that decide whether a run works at all have
+their own document: [Tuning](tuning.md).
 
 ## `qubo_min_solver(A, b, c, ...)`
 
 Entries marked **(GP)** exist for the warm-started graph/Gram bisection
-workflow — see [Graph-partitioning specifics](graph-partitioning.md#graph-partitioning-specifics-gp).
+workflow — see [Graph-partitioning specifics](graph-partitioning.md).
 They are not general-purpose defaults.
 
 | Parameter | Default | Meaning |
@@ -26,7 +28,7 @@ They are not general-purpose defaults.
 | `save_addinfo` | `True` | Carry the minimum state vectors `X_min` (otherwise energies only). |
 | `save_csv` | `False` | Write `Runs/Evaluation_<date>/`: summary, trajectory and add-info CSV plus the plot as HTML. **Writes one directory per run.** |
 | `visual_inst` | `False` | Open the Plotly visualiser. |
-| `recompute_every` | `1024` | Every k steps, recompute gradient `G` and energy `E` **exactly** from `X` instead of updating incrementally — guards against float drift on long runs. What it costs is measured in [performance.md](performance.md#where-the-time-goes). |
+| `recompute_every` | `1024` | Every k steps, recompute gradient `G` and energy `E` **exactly** from `X` instead of updating incrementally — guards against float drift on long runs. Costs ~6 µs/step at the default; see [the measurements](performance.md#where-the-time-goes). |
 | `mem_budget_mb` | `64.0` | Memory budget of the bulk RNG blocks. Larger = fewer refills, more RAM. Does **not** affect the result — only the block size, not the number sequence. |
 
 **Returns** `(Min_varAssignements, Mins, Trajectories, Infos)` — same order as

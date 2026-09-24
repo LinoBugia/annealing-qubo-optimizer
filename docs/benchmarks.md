@@ -1,11 +1,9 @@
 # Benchmark instances
 
-Results on two public benchmark libraries, and the importers that convert
-them losslessly into the canonical QUBO form.
-
-Two importers turn public benchmark libraries into the canonical `(A, b, c)`
-form. Both follow the same rule: **convert losslessly or refuse.** A converter
-that silently approximates would make every number on this page meaningless.
+Results on two public benchmark libraries, and the importers that convert them
+losslessly into the canonical `(A, b, c)` form. Both importers follow the same
+rule: **convert losslessly or refuse.** A converter that silently approximates
+would make every number on this page meaningless.
 
 | Library | Module | Script | Converts losslessly |
 |---|---|---|---|
@@ -23,25 +21,42 @@ python Skript_Solve_Gset.py --steps 100000            # all nine below
 python Skript_Solve_Gset.py --instances G1 --steps 300000
 ```
 
+The nine instances as QUBOs. *Monomials* counts the quadratic terms
+`x_i·x_j` with a nonzero coefficient — one per edge, since `A = W`. Note that
+it does not track `n`: G70 has 10 000 variables but fewer terms than G1 with
+800, which is why problem size cannot be read off the variable count alone.
+
+| Instance | n | monomials | degree | `A` as CSR | dense would be |
+|---|---|---|---|---|---|
+| G1 | 800 | 19 176 | 47.9 | 463 KB | 5.1 MB |
+| G11 | 800 | 1 600 | 4.0 | 42 KB | 5.1 MB |
+| G14 | 800 | 4 694 | 11.7 | 116 KB | 5.1 MB |
+| G22 | 2 000 | 19 990 | 20.0 | 488 KB | 32.0 MB |
+| G32 | 2 000 | 4 000 | 4.0 | 104 KB | 32.0 MB |
+| G55 | 5 000 | 12 498 | 5.0 | 320 KB | 200 MB |
+| G60 | 7 000 | 17 148 | 4.9 | 440 KB | 392 MB |
+| G70 | 10 000 | 9 999 | 2.0 | 280 KB | 800 MB |
+| G81 | 20 000 | 40 000 | 4.0 | 1.04 MB | 3.20 GB |
+
 Random starting points, no warm start, no problem-specific moves. `num_MC` is
 derived from the [efficiency plateau](performance.md#monte-carlo-trials-batching-and-where-it-stops-paying)
 and `T` from the [scan correction](tuning.md#temperature-correct-for-the-scan) — neither
 is hand-tuned per instance.
 
-| Instance | n | degree | `num_MC` | cut found | best known | % | time |
-|---|---|---|---|---|---|---|---|
-| G1 | 800 | 47.9 | 188 | 11 591 | 11 624 | **99.72** | 186 s |
-| G11 | 800 | 4.0 | 188 | 562 | 564 | **99.65** | 190 s |
-| G14 | 800 | 11.7 | 188 | 3 038 | 3 064 | **99.15** | 192 s |
-| G22 | 2 000 | 20.0 | 75 | 13 154 | 13 359 | 98.47 | 180 s |
-| G32 | 2 000 | 4.0 | 75 | 1 388 | 1 410 | 98.44 | 170 s |
-| G55 | 5 000 | 5.0 | 30 | 9 983 | 10 299 | 96.93 | 163 s |
-| G60 | 7 000 | 4.9 | 21 | 13 739 | 14 188 | 96.84 | 155 s |
-| G70 | 10 000 | 2.0 | 15 | 9 173 | 9 591 | 95.64 | 147 s |
-| G81 | 20 000 | 4.0 | 8 | 13 402 | 14 060 | 95.32 | 155 s |
+| Instance | `num_MC` | cut found | best known | % | time |
+|---|---|---|---|---|---|
+| G1 | 188 | 11 591 | 11 624 | **99.72** | 186 s |
+| G11 | 188 | 562 | 564 | **99.65** | 190 s |
+| G14 | 188 | 3 038 | 3 064 | **99.15** | 192 s |
+| G22 | 75 | 13 154 | 13 359 | 98.47 | 180 s |
+| G32 | 75 | 1 388 | 1 410 | 98.44 | 170 s |
+| G55 | 30 | 9 983 | 10 299 | 96.93 | 163 s |
+| G60 | 21 | 13 739 | 14 188 | 96.84 | 155 s |
+| G70 | 15 | 9 173 | 9 591 | 95.64 | 147 s |
+| G81 | 8 | 13 402 | 14 060 | 95.32 | 155 s |
 
-All nine ran at a flat 100 000 steps, which starves the large instances —
-see [Step budget](tuning.md#step-budget-it-must-scale-with-n). Re-running the
+All nine ran at a flat 100 000 steps, which is 125 sweeps for G1 but only 5
+for G81 — see [Step budget](tuning.md#step-budget-it-must-scale-with-n). Re-running the
 four large instances at 60 sweeps each (`steps = 60·n`) separates a
 measurement artefact from a real deficit:
 
@@ -54,8 +69,8 @@ measurement artefact from a real deficit:
 
 **G81 was genuinely starved** and gains 2.3 points once fed. **G55 and G60 do
 not move at all** despite 3–4× the steps, so for the mid-size sparse instances
-the deficit is *not* the step budget — and this README has no confirmed
-explanation for it. The untested candidate is the number of independent
+the deficit is *not* the step budget — and there is no confirmed explanation
+for it here. The untested candidate is the number of independent
 chains, which falls from 188 to 8 as n grows because `num_MC·n` is held on the
 [efficiency plateau](performance.md#monte-carlo-trials-batching-and-where-it-stops-paying);
 chain count and instance size are confounded in this table and were never
@@ -81,7 +96,7 @@ without loss:
 
 ```math
 \max \sum_i c_i x_i \quad\text{s.t.}\quad \sum_{i \in S_r} x_i \le 1
- \Longrightarrow 
+\;\Longrightarrow\;
 E(x) = -\sum_i c_i x_i + P \sum_r \sum_{i<j \in S_r} x_i x_j
 ```
 

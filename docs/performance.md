@@ -1,7 +1,7 @@
 # Performance
 
 Runtime and memory measurements of the batched kernel, how they were taken,
-and where the hard limits are. Reproduce with `python Bench_Performance.py`.
+where the hard limits are, and what stronger hardware would buy.
 
 All numbers measured on **Apple M4** (4 performance + 6 efficiency cores),
 24 GB unified memory, macOS 26.5, Python 3.12, numpy 1.26.4 (OpenBLAS, capped

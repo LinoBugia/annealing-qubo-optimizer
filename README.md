@@ -1,140 +1,211 @@
 # annealing-qubo-optimizer
 
-Digital Annealing reduces a combinatorial problem to a sequence of single bit
-flips. In Python that usually dies on the data structure: a dict of monomials,
-one Monte-Carlo trial after another, and a few thousand variables is the
-ceiling. This library keeps the semantics and swaps the structure — the QUBO is
-a matrix, all trials run as one batch, and the ceiling moves to hundreds of
-thousands of variables on a laptop.
+**Optimize thousands of binary optimization variables on local hardware.**
+Hundreds of thousands with sparse storage — and millions on stronger hardware.
 
-It is a heuristic: it returns the best state found across `S × num_MC`
-annealing chains and claims nothing about optimality. What it offers is
-throughput, full instrumentation of the run, and lossless importers for two
-public benchmark libraries so the quality claims can be checked.
+A batched Digital Annealing engine **for QUBOs only** — the fast,
+industrialized version of
+[annealing-cop-approximator](https://github.com/LinoBugia/annealing-cop-approximator). Pure numpy, no
+GPU, no solver licence.
 
-```console
-$ python Skript_Solve_Gset.py --instances G1 --steps 100000
+Public benchmark instances, solved on a 2024 laptop (Apple M4, 24 GB) with
+nothing but numpy and scipy:
 
-Gset / Max-Cut — 100000 steps, T from the scan correction, mc on the plateau
+| problem | variables | monomials | QUBO in RAM | runtime | reached |
+|---|---|---|---|---|---|
+| **G1** — Max-Cut | 800 | 19 176 | 463 KB | 3.1 min | 11 591 of 11 624 · **99.72%** |
+| **G22** — Max-Cut | 2 000 | 19 990 | 488 KB | 3.0 min | 13 154 of 13 359 · **98.47%** |
+| **G70** — Max-Cut | 10 000 | 9 999 | 280 KB | 2.5 min | 9 173 of 9 591 · **95.64%** |
+| **G81** — Max-Cut | 20 000 | 40 000 | 1.04 MB | 2.6 min | 13 402 of 14 060 · **95.32%** |
+| **cdc7-4-3-2** — set packing | 11 811 | 1 240 000 | 29.8 MB | 14 min | 287 of 307 · **93.5%** |
 
-inst       n   edges   deg    mc  T_scan      cut bestknown     gap      %       s
-G1       800   19176  47.9   188   0.634    11591     11624      33  99.72     186
+- **variables** — `n`, the number of binary unknowns the annealer flips.
+- **monomials** — quadratic terms `x_i·x_j` with a nonzero coefficient. This,
+  not `n`, is the real size of the problem: it is what a dict-based
+  implementation has to hold as individual Python objects, and it is why
+  G70 (10 000 variables, 9 999 terms) is a *smaller* problem than G1.
+- **QUBO in RAM** — the matrix `A` as scipy CSR. Stored densely, G81 would
+  need 3.20 GB instead of 1.04 MB.
+- **runtime** — elapsed time on the clock from launching the script to the
+  printed result: reading the instance, building the QUBO, calibrating the
+  cooling schedule, every annealing step, and the final evaluation. Not CPU
+  time — one process, one core's worth of numpy, no GPU.
+- **reached** — against the best value published for that instance.
+  `cdc7-4-3-2` is an **open** MIPLIB 2017 instance: no optimum is proven, and
+  feasibility here is verified against the original MPS structure rather than
+  against the QUBO.
+
+The Max-Cut runs all used a flat 100 000 steps — 125 passes over the variables
+for G1, but only 5 for G81. Given a budget proportional to `n`, G81 reaches
+**97.61%**. All nine Gset instances, the temperature and trial counts (derived
+from measurements, never hand-tuned per instance), and why set packing is the
+hard case: [Benchmark instances](docs/benchmarks.md).
+
+There are **no bounds yet on solution quality** — this is a heuristic and
+claims nothing about optimality. What it offers is throughput: ~12 ns per
+evaluated bit flip, a step that costs O(`num_MC`·n) rather than O(n²), and a
+measured ceiling of **262 144 variables in 202 MB**, where dense storage would
+need 550 GB. See [Performance](docs/performance.md).
+
+MIT licensed, see [LICENSE](LICENSE).
+
+## Contents
+
+| Document | Contents |
+|---|---|
+| [Tuning](docs/tuning.md) | **Read this first** — temperature and step budget, the two settings that decide whether a run works at all |
+| [Performance](docs/performance.md) | Step time, scaling, memory limits, where the time goes, what stronger hardware would buy |
+| [Benchmark instances](docs/benchmarks.md) | Gset (Max-Cut) and MIPLIB (set packing) results, the lossless importers, and which problems suit this engine |
+| [Parameter reference](docs/configuration.md) | Every `qubo_min_solver` parameter, every cooling schedule type, what the call returns |
+| [Design notes](docs/design-notes.md) | Each change against the reference in full, verification, roadmap |
+| [Graph-partitioning specifics](docs/graph-partitioning.md) | The `da_gp` schedule family, calibrated for warm-started Gram bisection |
+| [Visualiser](docs/visualiser.md) | What `VisualizeRuns` draws and its display conventions |
+
+Below: [What changed against the reference](#what-changed-against-the-reference) ·
+[Canonical form](#canonical-form) · [Modules](#modules-code) ·
+[Requirements](#requirements) · [Quickstart](#quickstart)
+
+## What changed against the reference
+
+[annealing-cop-approximator](https://github.com/LinoBugia/annealing-cop-approximator) holds the generic,
+dict-based PBF implementation: arbitrary degree, Markov-chain view, SA / SCA /
+TSP variants. It remains the reference in both senses — the source of the
+semantics, and the thing this code is checked against. For PBFs of degree > 2
+you still want it.
+
+**This repository is standalone.** No module under `Funcs_Qubo_*` imports
+anything from the reference; the kernel and `qubo_min_solver` run with nothing
+but the packages in [Requirements](#requirements). The reference is a
+*verification* dependency, needed only by `Test_Compare_Reference.py` and by
+the optional S8 block of `Bench_Performance.py` — both detect its absence and
+skip rather than fail.
+
+Restricting the scope to degree 2 is what buys everything below.
+
+- **Storage: monomial dict → matrix.** Row `k` of `A` *is* the monomial list
+  of `x_k`, so the reference's `pbf_var_dict` disappears entirely —
+  **8–11× less memory than the dict**, and at n=2000 the dict costs more than
+  three times the *dense* matrix. This is what lifts the practical ceiling
+  from a few thousand variables to
+  [262 144](docs/performance.md#large-n-bounded-degree-via-csr).
+- **ΔE from a gradient, not monomial iteration.** With `G = X·A` the whole ΔE
+  vector is `(1−2X)·(b+2G)`, and an accepted flip of bit `k` updates it with
+  `G += s_k · A[k,:]`. This is also what makes the acceptance scan
+  vectorisable at all.
+- **All Monte-Carlo trials in one batch.** One `(mc, n)` array instead of a
+  Python loop, so extra trials cost far less than linear — see
+  [the batching measurements](docs/performance.md#monte-carlo-trials-batching-and-where-it-stops-paying).
+  One flip per step *per trial* is preserved; the DA semantics are unchanged.
+- **Bulk RNG.** Blocks under a memory budget instead of one draw at a time,
+  and `standard_exponential` instead of `uniform + log`. RNG is still the
+  single largest cost in a step, at
+  [37–44%](docs/performance.md#where-the-time-goes).
+- **A guard against float drift.** `G` and `E` are reconstructed exactly from
+  `X` every `recompute_every` steps, at about 6 µs per step — the reason
+  million-step runs stay trustworthy.
+- **One reference bug, deliberately not reproduced.** Min-tracking is seeded
+  with the initial state, so a warm start no longer returns an empty minimum
+  assignment.
+
+Net effect on the same problem (n=2000, density 0.3, one trial each):
+**≈41× per trial**, rising to **≈76×** once eight trials are batched — full
+table in [Against the reference library](docs/performance.md#against-the-reference-library),
+each change in full in [Design notes](docs/design-notes.md).
+
+## Canonical form
+
+```math
+E(x) \;=\; x^{\top} A x \;+\; b^{\top} x \;+\; c ,
+\qquad x \in \lbrace 0,1 \rbrace^{n}
 ```
 
-`G1` is a standard Max-Cut benchmark; 11 624 is the best value anyone has
-published for it. Neither `mc` nor `T_scan` was set by hand — both are derived
-from measurements, starting from a uniformly random point with no
-problem-specific tuning. The run is deterministic for a given seed, so every
-column but the last reproduces exactly.
+with $A \in \mathbb{R}^{n \times n}$ symmetric and $\operatorname{diag}(A) = 0$
+(dense float or scipy CSR), $b \in \mathbb{R}^{n}$ linear and $c$ constant.
+The energy change from flipping bit $k$ is
 
-## Quickstart
+```math
+\Delta E_k \;=\; (1 - 2x_k)\,\bigl(b_k + 2\,(Ax)_k\bigr)
+```
+
+Row $k$ of $A$ *is* the monomial list of $x_k$, which is why no `pbf_var_dict`
+is needed. **One flip per step and per trial** — that is the Digital Annealing
+semantics and it is preserved exactly. What gets vectorised around it is the
+acceptance scan over all $n$ flips and the Monte-Carlo trials as an `(mc,n)`
+batch.
+
+## Modules (`Code/`)
+
+| Module | Contents |
+|---|---|
+| `Funcs_Qubo_ProblemGeneration` | Generators (random QUBO, number partitioning, Gram clustering), Lloyd warm start, converters pbf ↔ (A,b,c) — tuple **and** packed int keys |
+| `Funcs_Qubo_Optimizers` | `qubo_min_solver` (mirror of `pbf_min_solver`), Plotly `VisualizeRuns`, CSV persistence in the `Runs/` layout |
+| `Funcs_Qubo_Annealers` | Batched DA kernel: `(mc,n)` scan, E_Offset mechanics, min tracking seeded with the initial state, periodic exact G/E reconstruction |
+| `Funcs_Qubo_TempSchedules` | Cooling schedules, generic ones plus the calibrated `da_gp`/`da_gp_floor` family, plateau phase (`hold_steps`) |
+| `Funcs_Qubo_Annealing3` | Class-free base: `eval_qubo`, `eval_delta_energy`, int-key pack/unpack, backend hook (`xp` → CuPy) |
+| `Funcs_Qubo_Randomizers` | Bulk RNG blocks (budget-limited), `standard_exponential` Metropolis; the seed is the only persistence |
+| `Funcs_Qubo_MaxCut` | Gset/Max-Cut import — natively unconstrained, no penalty needed |
+| `Funcs_Qubo_MpsImport` | MPS/MIPLIB import — pure set packing only, rejects anything lossy |
+
+Runnable scripts in the same folder:
+
+| Script | Purpose |
+|---|---|
+| `Skript_Solve_Random_QUBO.py` | Demo of the multi-start mode: several start vectors, `num_MC` trials each, with the visualiser and CSV output |
+| `Skript_Solve_Gset.py` | Max-Cut on Gset — `num_MC` and `T` derived from measurements, not hand-set |
+| `Skript_Solve_MIPLIB.py` | MIPLIB set packing, with a `--probe` temperature grid |
+| `Bench_Performance.py` | The nine benchmark blocks behind [Performance](docs/performance.md) |
+| `Test_Compare_Reference.py` | Verification against the reference library (needs it present) |
+
+## Requirements
+
+| Package | Needed for |
+|---|---|
+| `numpy` | everything — the annealing kernel needs nothing else |
+| `scipy` | sparse (CSR) problems and both benchmark importers |
+| `pandas`, `plotly` | `qubo_min_solver` only: CSV persistence and the visualiser |
+
+`digital_annealing_batch` runs on numpy alone. The extra two enter through
+`Funcs_Qubo_Optimizers`, which imports them at module level — so a
+`qubo_min_solver` call needs all four even when you never write a CSV.
 
 ```bash
 pip install -r requirements.txt
-cd Code
 ```
 
-```bash
-# Solve a random QUBO: 3 start vectors × 5 trials each, with plot and CSV
-python Skript_Solve_Random_QUBO.py
-```
-
-```bash
-# Reproduce the Max-Cut benchmark (downloads the instances on first run)
-python Skript_Solve_Gset.py --instances G1,G11,G14 --steps 100000
-```
-
-Only `numpy` is needed for the annealing kernel. `scipy` adds sparse (CSR)
-problems and both importers; `pandas` and `plotly` are pulled in by
-`qubo_min_solver` for CSV output and the visualiser, so a solver call needs
-all four.
-
-## Commands
+## Quickstart
 
 ```python
 from Funcs_Qubo_ProblemGeneration import create_random_qubo_signed, random_start_states
 from Funcs_Qubo_Optimizers import qubo_min_solver
 
 A, b, c = create_random_qubo_signed(500, density=0.5, seed=42)
-starts = random_start_states(500, 3, seed=42)      # 3 start vectors
+starts = random_start_states(500, 3, seed=42)        # 3 start vectors
 
 Min_varAss, Mins, Trajectories, Infos = qubo_min_solver(
-    A, b, c, steps=3000, num_MC=5,                # num_MC trials per start vector
+    A, b, c, steps=3000, num_MC=5,
     cooling_param=["logarithmic", 50, 0],
-    initial_varAssignements_pre=starts,
+    initial_varAssignements_pre=starts,              # num_MC trials per start vector
+    hold_steps=600,                                  # hold T_start for 600 steps
     save_csv=True, visual_inst=True)
 ```
 
-Every parameter is listed in [docs/configuration.md](docs/configuration.md).
-Two of them decide whether a run works at all — see
-[docs/tuning.md](docs/tuning.md).
+New relative to the reference: `initial_varAssignements_pre` accepts a **list
+of start vectors** — each one runs `num_MC` trials as a batch, and each group
+is calibrated at its own starting point via `cooling_per_group`.
+`save_csv=True` writes `Runs/Evaluation_<date>/` (summary, trajectory and
+add-info CSV plus the plot as HTML); `visual_inst=True` opens the Plotly
+visualiser. Every parameter is in the
+[Parameter reference](docs/configuration.md); the two that decide whether a run
+works at all are in [Tuning](docs/tuning.md).
 
-## Core concept
+Or reproduce a published benchmark directly:
 
-The whole library works on one canonical form:
-
-```math
-E(x) = x^{\top} A x + b^{\top} x + c , \qquad x \in \lbrace 0,1 \rbrace^{n}
+```bash
+cd Code
+python Skript_Solve_Gset.py --instances G1,G11,G14 --steps 100000
+python Skript_Solve_MIPLIB.py --instance cdc7-4-3-2 --probe
 ```
-
-with `A` symmetric and zero on the diagonal (dense float or scipy CSR), `b`
-linear, `c` constant. Row `k` of `A` *is* the monomial list of `x_k`, which is
-why no separate variable index is needed. Flipping bit `k` changes the energy by
-
-```math
-\Delta E_k = (1 - 2x_k)\bigl(b_k + 2(Ax)_k\bigr)
-```
-
-**One flip per step and per trial** — that is the Digital Annealing semantics
-and it is preserved exactly. What is vectorised around it is the acceptance
-scan over all `n` flips and the Monte-Carlo trials as an `(mc,n)` batch. The
-consequences of that choice, measured, are in
-[docs/performance.md](docs/performance.md).
-
-## Output
-
-`qubo_min_solver` returns four values, each of length `start groups × num_MC`:
-
-```
-Min_varAssignements   best 0/1 state per trial
-Mins                  best energy per trial
-Trajectories          energy over time, steps+1 values per trial
-Infos                 dict: schedules per group, offsets, exec times,
-                      group_of_trial, best index, X_best, E_best
-```
-
-With `save_csv=True` each run also writes `Code/Runs/Evaluation_<date>/` —
-summary, trajectory and add-info CSV plus the plot as HTML. Nothing outside
-this repository reads that layout; it is a record, not an interchange format.
-
-## Documentation
-
-| Document | Contents |
-|----------|----------|
-| [docs/tuning.md](docs/tuning.md) | Temperature and step budget — the two settings that decide everything |
-| [docs/configuration.md](docs/configuration.md) | Every `qubo_min_solver` parameter, every cooling schedule type |
-| [docs/performance.md](docs/performance.md) | Step time, scaling, memory limits, where the time goes, hardware outlook |
-| [docs/benchmarks.md](docs/benchmarks.md) | Gset (Max-Cut) and MIPLIB (set packing) results, and the importers |
-| [docs/graph-partitioning.md](docs/graph-partitioning.md) | The `da_gp` schedule family, calibrated for warm-started Gram bisection |
-| [docs/visualiser.md](docs/visualiser.md) | What `VisualizeRuns` draws and its display conventions |
-| [docs/design-notes.md](docs/design-notes.md) | Why this differs from the reference implementation, and the roadmap |
-
-## Project structure
-
-| Path | Purpose |
-|------|---------|
-| `Code/Funcs_Qubo_Annealers.py` | `digital_annealing_batch` — the batched DA kernel; everything else is around it |
-| `Code/Funcs_Qubo_Optimizers.py` | `qubo_min_solver`, the Plotly visualiser, CSV persistence |
-| `Code/Funcs_Qubo_Annealing3.py` | Canonical form helpers, packed int keys, `xp` backend hook |
-| `Code/Funcs_Qubo_TempSchedules.py` | Cooling schedules, generic and calibrated |
-| `Code/Funcs_Qubo_Randomizers.py` | Bulk RNG blocks, `standard_exponential` Metropolis |
-| `Code/Funcs_Qubo_ProblemGeneration.py` | Problem generators, Lloyd warm start, pbf ↔ (A,b,c) |
-| `Code/Funcs_Qubo_MaxCut.py` | Gset / Max-Cut import |
-| `Code/Funcs_Qubo_MpsImport.py` | MPS / MIPLIB import, pure set packing only |
-| `Code/Skript_Solve_*.py` | Runnable entry points: random QUBO, Gset, MIPLIB |
-| `Code/Bench_Performance.py` | The nine benchmark blocks behind `docs/performance.md` |
-| `Code/Test_Compare_Reference.py` | Verification against [annealing-cop-approximator](https://github.com/LinoBugia/annealing-cop-approximator), cloned as a sibling directory |
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). Copyright (c) 2026 Lino Bugia.

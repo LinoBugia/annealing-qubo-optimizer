@@ -1,9 +1,9 @@
 # Graph-partitioning specifics (GP)
 
-The `da_gp` schedule family, calibrated for one problem type: warm-started
-binary bisection of a Gram matrix. Not a general-purpose default.
+The `da_gp` schedule family and the parameters marked **(GP)** in the
+[Parameter reference](configuration.md).
 
-> **Scope.** Everything in this section is calibrated for **one** problem
+> **Scope.** Everything in this document is calibrated for **one** problem
 > family: warm-started binary bisection of a Gram matrix, as used by the
 > `gp-qubo-rag-indexer`. The workflow is `create_graph_binary_clustering_qubo`
 > → `lloyd_bisect` warm start → `da_gp` cooling → `auto_gp` offset. The
@@ -35,7 +35,7 @@ binary bisection of a Gram matrix. Not a general-purpose default.
 
 ```
 q25, q50   quantiles of the UPHILL flips (ΔE > 0) at the start
-T_hot      = q50 / ln(n / p_hot)          scan correction — see tuning.md,
+T_hot      = q50 / ln(n / p_hot)          scan correction — see Tuning,
 T_freeze   = q25 / ln(n / p_cold)         this part is NOT gp-specific
 d          = 2.22  (fixed)
 c          = min( T_hot·ln2 ,  T_freeze·ln(1+S^d) ,  gamma·D·ln2 )
