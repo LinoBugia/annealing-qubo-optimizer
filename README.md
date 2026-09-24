@@ -115,22 +115,20 @@ each change in full in [Design notes](docs/design-notes.md).
 ## Canonical form
 
 ```math
-E(x) \;=\; x^{\top} A x \;+\; b^{\top} x \;+\; c ,
-\qquad x \in \lbrace 0,1 \rbrace^{n}
+E(x) = x^{\top} A x + b^{\top} x + c , \qquad x \in \lbrace 0,1 \rbrace^{n}
 ```
 
-with $A \in \mathbb{R}^{n \times n}$ symmetric and $\operatorname{diag}(A) = 0$
-(dense float or scipy CSR), $b \in \mathbb{R}^{n}$ linear and $c$ constant.
-The energy change from flipping bit $k$ is
+with `A` symmetric and zero on the diagonal (dense float or scipy CSR), `b`
+linear and `c` constant. The energy change from flipping bit `k` is
 
 ```math
-\Delta E_k \;=\; (1 - 2x_k)\,\bigl(b_k + 2\,(Ax)_k\bigr)
+\Delta E_k = (1 - 2x_k)\bigl(b_k + 2(Ax)_k\bigr)
 ```
 
-Row $k$ of $A$ *is* the monomial list of $x_k$, which is why no `pbf_var_dict`
+Row `k` of `A` *is* the monomial list of `x_k`, which is why no `pbf_var_dict`
 is needed. **One flip per step and per trial** — that is the Digital Annealing
 semantics and it is preserved exactly. What gets vectorised around it is the
-acceptance scan over all $n$ flips and the Monte-Carlo trials as an `(mc,n)`
+acceptance scan over all `n` flips and the Monte-Carlo trials as an `(mc,n)`
 batch.
 
 ## Modules (`Code/`)

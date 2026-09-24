@@ -10,12 +10,12 @@ acceptance probability *per flip* must be `p/n`, not `p` — which makes the
 right temperature far lower than intuition suggests:
 
 ```math
-T \;\approx\; \frac{\Delta E_{\text{barrier}}}{\ln(n / p)}
+T \approx \frac{\Delta E_B}{\ln(n / p)}
 ```
 
 with `p` the target chance that some uphill flip is accepted in a step (0.3 is
-a good default) and `ΔE_barrier` **the barrier that actually blocks the
-search** — which is *not* always the median:
+a good default) and `ΔE_B` **the barrier that actually blocks the search**
+— which is *not* always the median:
 
 - **Spread-out spectrum** (real-valued coefficients, as in Max-Cut): use the
   **median** uphill ΔE. There is no mass at any one value, so the median is
