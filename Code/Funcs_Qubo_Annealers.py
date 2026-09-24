@@ -51,6 +51,10 @@ def digital_annealing_batch(A, b, c, X0, Ts, offset_increase_rate: float,
       "Trajectories" (mc, steps+1) float64 — E over time, incl. start energy
       "E_min"        (mc,)
       "X_min"        (mc, n) int8      (only if save_addinfo)
+      "X_final"      (mc, n) int8      — the state the chains ended on, which
+                     is NOT the best one; needed to continue a chain across
+                     phases (e.g. a soft/hard penalty cycle) where X_min from
+                     one phase is measured on a different energy scale
       "Offsets"      (mc, steps)       (only if track_offsets)
     """
     xp = qa3.xp
@@ -133,7 +137,7 @@ def digital_annealing_batch(A, b, c, X0, Ts, offset_increase_rate: float,
             E = (Xf * G).sum(axis=1) + Xf @ b + c
             dE = (1.0 - 2.0 * Xf) * (b + 2.0 * G)
 
-    out = {"Trajectories": vals, "E_min": E_min}
+    out = {"Trajectories": vals, "E_min": E_min, "X_final": X}
     if save_addinfo:
         out["X_min"] = X_min
     if track_offsets:

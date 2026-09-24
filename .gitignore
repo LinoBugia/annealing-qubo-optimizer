@@ -24,3 +24,7 @@ Code/Instances/
 *.mps
 *.mps.gz
 *.sol.gz
+
+# Working notes from the mechanism experiments — measurements on two
+# instances, not documentation. Kept out of the repo deliberately.
+LAB_NOTES.md

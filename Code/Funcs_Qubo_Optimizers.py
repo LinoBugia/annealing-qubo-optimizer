@@ -338,7 +338,7 @@ def qubo_min_solver(A, b, c=0.0, type_alg: str = "digitalAnnealing",
         Infos                dict: labels, group_of_trial, T (group 0),
                              Ts (per group), ExecTimes, Offsets,
                              offset_rates, cooling_c (per group),
-                             best (index), X_best, E_best
+                             best (index), X_best, E_best, X_final
     """
     if type_alg != "digitalAnnealing":
         raise ValueError("qubo_min_solver: only 'digitalAnnealing' — use "
@@ -418,7 +418,7 @@ def qubo_min_solver(A, b, c=0.0, type_alg: str = "digitalAnnealing",
 
     T_shared = None if cooling_per_group else _calibrate(X0_groups[0][0])
 
-    Trajectories, Mins, Min_varAssignements = [], [], []
+    Trajectories, Mins, Min_varAssignements, Final_varAssignements = [], [], [], []
     Offsets, ExecTimes, labels, group_of_trial = [], [], [], []
     Ts, offset_rates, cooling_cs = [], [], []
     for g, X0 in enumerate(X0_groups):
@@ -442,6 +442,7 @@ def qubo_min_solver(A, b, c=0.0, type_alg: str = "digitalAnnealing",
             Mins.append(float(out["E_min"][i]))
             if save_addinfo:
                 Min_varAssignements.append(out["X_min"][i].tolist())
+            Final_varAssignements.append(out["X_final"][i].tolist())
             if track_offsets:
                 Offsets.append(out["Offsets"][i])
             labels.append("S%d_MC%d" % (g, i))
@@ -458,7 +459,8 @@ def qubo_min_solver(A, b, c=0.0, type_alg: str = "digitalAnnealing",
              "offset_increase_rate": offset_rates[0], "offset_rates": offset_rates,
              "cooling_c": cooling_cs, "cooling_per_group": cooling_per_group,
              "best": best, "E_best": Mins[best],
-             "X_best": Min_varAssignements[best] if save_addinfo else None}
+             "X_best": Min_varAssignements[best] if save_addinfo else None,
+             "X_final": Final_varAssignements}
 
     # ── CSV persistence (the reference's Runs/ layout) ──────────────────────
     ID_run = None
