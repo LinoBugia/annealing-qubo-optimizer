@@ -101,7 +101,7 @@ without loss:
 ```math
 \max \sum_i c_i x_i \quad \text{s.t.} \quad \sum_{i \in S_r} x_i \le 1
 \Longrightarrow
-E(x) = -\sum_i c_i x_i + P \sum_r \sum_{i<j \in S_r} x_i x_j
+E(x) = -\sum_i c_i x_i + P \sum_r \sum_{\substack{i,j \in S_r \\ i < j}} x_i x_j
 ```
 
 With `M` the 0/1 constraint matrix, `(MᵀM)_ij` counts the rows containing both

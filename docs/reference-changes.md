@@ -1,4 +1,4 @@
-# Design notes
+# Changes against the reference
 
 Each deliberate difference from the reference implementation, what it bought,
 how the result is verified, and what is still open.

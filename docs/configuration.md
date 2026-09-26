@@ -54,11 +54,20 @@ group), `cooling_per_group`, `best`, `E_best`, `X_best`.
 | `["exponential", c]` | `exp(t/c) − 1` |
 | `["geometric", T0, α]` | `T0·α^(t−1)` |
 | `["hyperbolic", T0]` | `T0 / t` |
+| `["sigma", c_start, c_end, form]` | **σ-scaled**: `T` from `c_start·σ` to `c_end·σ`, where `σ = std(ΔE)`. `form` is `geometric` (default), `staircase` or `linear`. Defaults `0.3 / 0.11`. |
 | `["da_gp", …]` **(GP)** | calibrated: `c / ln(1 + t^d)` |
 | `["da_gp_floor", …]` **(GP)** | calibrated: `T_freeze + (T_hot − T_freeze)·ln2 / ln(1 + t^d)` |
 
-For a new problem, start with the generic schedules above — `logarithmic` or
-`geometric` — and tune `c` against the ΔE scale at your starting point.
+**For a new problem, start with `["sigma"]`.** It needs no scale guess at all:
+σ is computed from the problem itself and the defaults land on the measured
+optimum for a dense ΔE spectrum. The solver fills σ in slot 4, the same way it
+fills the dE vector for `da_gp`; when calling `generate_cooling_schedule`
+directly, pass it yourself.
+
+The exception is a **penalty encoding** — there σ is dominated by directions
+the chain never takes and the schedule runs far too hot. Use `constant` with
+the scan correction instead. Which case you are in is one cheap measurement:
+[Tuning](tuning.md).
 
 
 ## The E_Offset
