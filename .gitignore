@@ -25,6 +25,8 @@ Code/Instances/
 *.mps.gz
 *.sol.gz
 
-# Working notes from the mechanism experiments — measurements on two
-# instances, not documentation. Kept out of the repo deliberately.
-LAB_NOTES.md
+# Laboratory/ — everything in here is working material, not the library:
+# research notes, measurements on single instances, abandoned experiments,
+# reference figures. Ignored wholesale and on purpose. Anything that survives
+# replication moves OUT of here, into Code/ or docs/.
+Laboratory/

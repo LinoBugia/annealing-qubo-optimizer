@@ -31,7 +31,8 @@ import plotly.io as pio
 from plotly.subplots import make_subplots
 
 from Funcs_Qubo_Annealers import digital_annealing_batch
-from Funcs_Qubo_Annealing3 import eval_qubo, eval_delta_energy
+from Funcs_Qubo_Annealing3 import (eval_qubo, eval_delta_energy,
+                                   delta_e_sigma as qa3_delta_e_sigma)
 from Funcs_Qubo_ProblemGeneration import random_start_states
 from Funcs_Qubo_Randomizers import BulkRandomizer
 from Funcs_Qubo_TempSchedules import generate_cooling_schedule, auto_offset_rate
@@ -289,7 +290,8 @@ def qubo_min_solver(A, b, c=0.0, type_alg: str = "digitalAnnealing",
                     offset_increase_rate=0.0, random_start=False,
                     cooling_per_group: bool = True, hold_steps: int = 0,
                     offset_k_escape: float = 25.0,
-                    recompute_every: int = 1024, mem_budget_mb: float = 64.0):
+                    recompute_every: int = 1024, mem_budget_mb: float = 64.0,
+                    kick: dict = None):
     """
     QUBO minimisation by batched Digital Annealing.
 
@@ -323,6 +325,13 @@ def qubo_min_solver(A, b, c=0.0, type_alg: str = "digitalAnnealing",
         keeps its full `steps` support points and therefore exactly the same
         end temperature as without a plateau. This gives the annealer a real
         exploration phase so it can leave the warm-start basin at all.
+    kick :
+        Optional sigma-calibrated offset kick, passed straight to the kernel
+        (see KICK_DEFAULTS in Funcs_Qubo_Annealers). It needs "sigma", and
+        WHICH sigma matters: on a penalty encoding the Walsh sigma is
+        dominated by constraint-violating directions the chain never takes
+        (420 on cdc7-4-3-2 against 16.7 measured at the actual operating
+        state), so pass the state-local one there.
     offset_k_escape :
         Scales the E_Offset when offset_increase_rate="auto_gp":
         rate = q50(dE+) / k_escape, i.e. after k_escape rejected steps the
@@ -372,6 +381,7 @@ def qubo_min_solver(A, b, c=0.0, type_alg: str = "digitalAnnealing",
     #   flatter starting points and melts them.
     #   cooling_per_group=False restores the old shared schedule.
     x_rand_cache = None
+    _sigma_cache = [None]        # sigma is global to the PBF, computed once
     time_init1 = time_init2 = 0.0
 
     def _calibrate(x_ref, quiet=False):
@@ -396,6 +406,19 @@ def qubo_min_solver(A, b, c=0.0, type_alg: str = "digitalAnnealing",
                         random_start_states(n, 1,
                                             seed_gen_initial_varAssignment)[0]))
                 cp[5] = x_rand_cache
+        elif str(cp[0]) == "sigma":
+            # sigma = std(dE) is a property of the PBF, not of a start point,
+            # so it is computed once for the whole call and shared by every
+            # start group — unlike the da_gp calibration above, which is
+            # deliberately per-group.
+            nonlocal_sigma = _sigma_cache[0]
+            if nonlocal_sigma is None:
+                nonlocal_sigma = qa3_delta_e_sigma(A, b)
+                _sigma_cache[0] = nonlocal_sigma
+            while len(cp) < 5:
+                cp.append(None)
+            if cp[4] is None:
+                cp[4] = nonlocal_sigma
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf) if quiet else contextlib.nullcontext():
             T_g = generate_cooling_schedule(cp, steps, hold_steps=hold_steps)
@@ -434,7 +457,8 @@ def qubo_min_solver(A, b, c=0.0, type_alg: str = "digitalAnnealing",
                                       master.spawn(),
                                       save_addinfo=save_addinfo,
                                       track_offsets=track_offsets,
-                                      recompute_every=recompute_every)
+                                      recompute_every=recompute_every,
+                                      kick=kick)
         endtime = time.time() - start_time_round
         ExecTimes.append(endtime)
         for i in range(num_MC):
@@ -458,6 +482,8 @@ def qubo_min_solver(A, b, c=0.0, type_alg: str = "digitalAnnealing",
              "ExecTimes": ExecTimes, "Offsets": Offsets if track_offsets else None,
              "offset_increase_rate": offset_rates[0], "offset_rates": offset_rates,
              "cooling_c": cooling_cs, "cooling_per_group": cooling_per_group,
+             "sigma": _sigma_cache[0],
+             "T_start": float(Ts[0][0]), "T_end": float(Ts[0][-1]),
              "best": best, "E_best": Mins[best],
              "X_best": Min_varAssignements[best] if save_addinfo else None,
              "X_final": Final_varAssignements}
@@ -478,7 +504,7 @@ def qubo_min_solver(A, b, c=0.0, type_alg: str = "digitalAnnealing",
             columns = ["type_alg", "ID", "time", "timegen1", "timegen2",
                        "bestMin", "seed_gen", "variables", "start_groups",
                        "num_MC", "type_cooling", "offset_rate",
-                       "T_start", "T_end"]
+                       "T_start", "T_end", "sigma"]
             pd.DataFrame(list(), columns=columns).to_csv(summary_path)
         ID_run = str(len(os.listdir(traj_dir)) + 1)
 
@@ -506,7 +532,8 @@ def qubo_min_solver(A, b, c=0.0, type_alg: str = "digitalAnnealing",
                  offset_rates[0] if len(set(offset_rates)) == 1
                  else "%.4g..%.4g" % (min(offset_rates), max(offset_rates)),
                  "%.4g..%.4g" % (min(t[0] for t in Ts), max(t[0] for t in Ts)),
-                 "%.4g..%.4g" % (min(t[-1] for t in Ts), max(t[-1] for t in Ts))])
+                 "%.4g..%.4g" % (min(t[-1] for t in Ts), max(t[-1] for t in Ts)),
+                 "" if _sigma_cache[0] is None else "%.6g" % _sigma_cache[0]])
 
     if visual_inst:
         fig = VisualizeRuns(n, type_alg, labels, Trajectories, Mins,

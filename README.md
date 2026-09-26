@@ -1,59 +1,64 @@
 # annealing-qubo-optimizer
 
-**Optimize thousands of binary optimization variables on local hardware.**
-Hundreds of thousands with sparse storage — and millions on stronger hardware.
+A batched Digital Annealing engine for QUBOs. **Pure numpy and scipy** — no
+GPU, no solver licence, no compiled extensions, no cloud.
 
-A batched Digital Annealing engine **for QUBOs only** — the fast,
-industrialized version of
-[annealing-cop-approximator](https://github.com/LinoBugia/annealing-cop-approximator). Pure numpy, no
-GPU, no solver licence.
+On a 2024 laptop (Apple M4, 24 GB):
 
-Public benchmark instances, solved on a 2024 laptop (Apple M4, 24 GB) with
-nothing but numpy and scipy:
+| problem | variables | monomials | QUBO in RAM | steps | runtime | reached |
+|---|---|---|---|---|---|---|
+| **G1** — Max-Cut | 800 | 19 176 | 463 KB | 30 000 | 2.0 min | 11 624 of 11 624 · **100.00%** |
+| **G22** — Max-Cut | 2 000 | 19 990 | 488 KB | 30 000 | 1.8 min | 13 317 of 13 359 · **99.69%** |
+| **G70** — Max-Cut | 10 000 | 9 999 | 280 KB | 300 000 | 7.4 min | 9 373 of 9 591 · **97.73%** |
+| **G81** — Max-Cut | 20 000 | 40 000 | 1.04 MB | 300 000 | 7.7 min | 13 658 of 14 060 · **97.14%** |
+| **cdc7-4-3-2** — set packing | 11 811 | 1 240 000 | 29.8 MB | 1 000 000 | 31 min | 289 of 307 · **94.14%** |
 
-| problem | variables | monomials | QUBO in RAM | runtime | reached |
-|---|---|---|---|---|---|
-| **G1** — Max-Cut | 800 | 19 176 | 463 KB | 3.1 min | 11 591 of 11 624 · **99.72%** |
-| **G22** — Max-Cut | 2 000 | 19 990 | 488 KB | 3.0 min | 13 154 of 13 359 · **98.47%** |
-| **G70** — Max-Cut | 10 000 | 9 999 | 280 KB | 2.5 min | 9 173 of 9 591 · **95.64%** |
-| **G81** — Max-Cut | 20 000 | 40 000 | 1.04 MB | 2.6 min | 13 402 of 14 060 · **95.32%** |
-| **cdc7-4-3-2** — set packing | 11 811 | 1 240 000 | 29.8 MB | 14 min | 287 of 307 · **93.5%** |
+Nine Gset instances average **98.74 %** of the best published value, and G1
+reaches it exactly. Each cell is one run at one seed, reproducible with the
+commands under [Quickstart](#quickstart).
 
-- **variables** — `n`, the number of binary unknowns the annealer flips.
-- **monomials** — quadratic terms `x_i·x_j` with a nonzero coefficient. This,
-  not `n`, is the real size of the problem: it is what a dict-based
-  implementation has to hold as individual Python objects, and it is why
-  G70 (10 000 variables, 9 999 terms) is a *smaller* problem than G1.
-- **QUBO in RAM** — the matrix `A` as scipy CSR. Stored densely, G81 would
-  need 3.20 GB instead of 1.04 MB.
-- **runtime** — elapsed time on the clock from launching the script to the
-  printed result: reading the instance, building the QUBO, calibrating the
-  cooling schedule, every annealing step, and the final evaluation. Not CPU
-  time — one process, one core's worth of numpy, no GPU.
-- **reached** — against the best value published for that instance.
-  `cdc7-4-3-2` is an **open** MIPLIB 2017 instance: no optimum is proven, and
-  feasibility here is verified against the original MPS structure rather than
-  against the QUBO.
+## What makes it fast
 
-The Max-Cut runs all used a flat 100 000 steps — 125 passes over the variables
-for G1, but only 5 for G81. Given a budget proportional to `n`, G81 reaches
-**97.61%**. All nine Gset instances, the temperature and trial counts (derived
-from measurements, never hand-tuned per instance), and why set packing is the
-hard case: [Benchmark instances](docs/benchmarks.md).
+| | |
+|---|---|
+| **~12 ns** | per evaluated bit flip |
+| **O(`num_MC`·n)** | per step, not O(n²) — the ΔE vector is maintained incrementally from a gradient |
+| **41–76×** | against the dict-based [reference implementation](https://github.com/LinoBugia/annealing-cop-approximator), per trial and once eight trials are batched |
+| **262 144 variables in 202 MB** | measured ceiling for a bounded-degree problem; dense storage would need 550 GB |
 
-There are **no bounds yet on solution quality** — this is a heuristic and
-claims nothing about optimality. What it offers is throughput: ~12 ns per
-evaluated bit flip, a step that costs O(`num_MC`·n) rather than O(n²), and a
-measured ceiling of **262 144 variables in 202 MB**, where dense storage would
-need 550 GB. See [Performance](docs/performance.md).
+The restriction to degree 2 is what buys all of it: row `k` of the matrix `A`
+*is* the monomial list of `x_k`, so no dictionary of terms exists at any
+point. Beyond that, the ceiling is RAM rather than the algorithm. Details in
+[Performance](docs/performance.md).
 
-MIT licensed, see [LICENSE](LICENSE).
+## Reading the table
+
+- **monomials**, not `n`, is the real size: it is what a dict-based solver
+  holds as individual Python objects, and it is why G70 (10 000 variables,
+  9 999 terms) is a *smaller* problem than G1 with 800.
+- **runtime** is wall clock for the whole script — reading the instance,
+  building the QUBO, calibrating the schedule, every step, final evaluation.
+  One process, one core's worth of numpy.
+- **reached** is against the best published value. `cdc7-4-3-2` is an **open**
+  MIPLIB 2017 instance with no proven optimum, and its feasibility is checked
+  against the original MPS rows, not against the QUBO.
+
+The step counts differ deliberately. One accepted flip per step means passes
+over the variables are `steps / n`, so a flat budget starves large instances:
+G81 gains 1.8 points from budget alone. And the variable count can mislead in
+the other direction — G70 splits into 1 598 independent components with 1 354
+variables that touch no edge, so its effective size is 8 646. The loader
+reports this. See [Benchmark instances](docs/benchmarks.md).
+
+There are **no bounds on solution quality** here. This is a heuristic and
+claims nothing about optimality — what it offers is throughput and honest
+measurement of where it stands.
 
 ## Contents
 
 | Document | Contents |
 |---|---|
-| [Tuning](docs/tuning.md) | **Read this first** — temperature and step budget, the two settings that decide whether a run works at all |
+| [Tuning](docs/tuning.md) | **Read this first** — the two temperature regimes, how to tell them apart, the step budget, the E_Offset |
 | [Performance](docs/performance.md) | Step time, scaling, memory limits, where the time goes, what stronger hardware would buy |
 | [Benchmark instances](docs/benchmarks.md) | Gset (Max-Cut) and MIPLIB (set packing) results, the lossless importers, and which problems suit this engine |
 | [Parameter reference](docs/configuration.md) | Every `qubo_min_solver` parameter, every cooling schedule type, what the call returns |
@@ -131,6 +136,59 @@ semantics and it is preserved exactly. What gets vectorised around it is the
 acceptance scan over all `n` flips and the Monte-Carlo trials as an `(mc,n)`
 batch.
 
+## Temperature: two regimes
+
+One cheap measurement decides which rules apply — the **spread** of the uphill
+ΔE spectrum, `q50/min`. It comes out around 1–5 on Max-Cut, where the spectrum
+is dense, and 15 or more on a penalty encoding, where the coefficients split
+into "moves along the feasible set" and "moves that break a constraint" with
+nothing in between.
+
+**Dense spectrum → scale by σ.** With `σ = std(ΔE)`, computed in closed form
+from the Walsh coefficients, temperatures expressed as multiples of σ transfer
+between instances:
+
+```python
+cooling_param = ["sigma", 0.3, 0.11]      # geometric, 0.3σ down to 0.11σ
+```
+
+The measured best constant temperature is `0.116σ` on G1 and `0.134σ` on G22 —
+two graphs whose degrees differ by a factor of twelve. Sweeping a grid of
+windows, the result peaks at `c_end ≈ 0.11`: **cool down to the optimal
+temperature and stop there rather than through it.** The hot end barely
+matters. On G1 that reached the best known value at 30 000 steps, where a flat
+100 000 on the older scan schedule fell 33 short.
+
+**Gapped spectrum → σ stops working.** A penalty encoding breaks the
+assumption that the chain lives where σ is measured: on `cdc7-4-3-2` the chain
+never leaves the feasible set, where ΔE is ±1, while σ averages over uniformly
+random states — all deeply infeasible — and reads 420 against a local scale of
+16.7. The σ defaults would run it 117× too hot. There the scan correction
+`T ≈ ΔE_min / ln(n/p)` applies, held constant: cooling windows into the
+optimum all lost against simply sitting at it.
+
+How far the all-flip scan is ahead of single-flip simulated annealing turns
+out to depend only on `T/σ`; a spectral-gap analysis of small instances is
+what locates where that advantage saturates. Out of scope here.
+
+## The E_Offset
+
+It raises the acceptance threshold on steps where **nothing** was admissible
+and resets on every accepted flip, so it only builds up across consecutive
+blocked steps — which makes its value predictable before you spend a run:
+
+| | blocked steps | worth |
+|---|---|---|
+| Max-Cut (G1, G11, G14, G22) | 0.00–0.19 % | nothing; it never grew once in 10 000 steps |
+| set packing (cdc7-4-3-2) | 11.7 % | **+3**, about a doubling of the budget |
+
+Acceptance scales as `exp(offset/T)`, so the unit is `T`, not the barrier
+height. Rates of 0.05 and 0.6 performed identically on cdc7 for opposite
+reasons — the small one creeps up over several blocked steps, the large one
+clears the step at once and resets, so it cannot compound.
+
+Full rules and the phase-plan variant: [Tuning](docs/tuning.md).
+
 ## Modules (`Code/`)
 
 | Module | Contents |
@@ -138,8 +196,8 @@ batch.
 | `Funcs_Qubo_ProblemGeneration` | Generators (random QUBO, number partitioning, Gram clustering), Lloyd warm start, converters pbf ↔ (A,b,c) — tuple **and** packed int keys |
 | `Funcs_Qubo_Optimizers` | `qubo_min_solver` (mirror of `pbf_min_solver`), Plotly `VisualizeRuns`, CSV persistence in the `Runs/` layout |
 | `Funcs_Qubo_Annealers` | Batched DA kernel: `(mc,n)` scan, E_Offset mechanics, min tracking seeded with the initial state, periodic exact G/E reconstruction |
-| `Funcs_Qubo_TempSchedules` | Cooling schedules, generic ones plus the calibrated `da_gp`/`da_gp_floor` family, plateau phase (`hold_steps`) |
-| `Funcs_Qubo_Annealing3` | Class-free base: `eval_qubo`, `eval_delta_energy`, int-key pack/unpack, backend hook (`xp` → CuPy) |
+| `Funcs_Qubo_TempSchedules` | Cooling schedules: generic ones, the σ-scaled family (`["sigma", c_start, c_end, form]`), the calibrated `da_gp`/`da_gp_floor` pair, plateau phase (`hold_steps`) |
+| `Funcs_Qubo_Annealing3` | Class-free base: `eval_qubo`, `eval_delta_energy`, `delta_e_sigma` (exact σ via Walsh coefficients), int-key pack/unpack, backend hook (`xp` → CuPy) |
 | `Funcs_Qubo_Randomizers` | Bulk RNG blocks (budget-limited), `standard_exponential` Metropolis; the seed is the only persistence |
 | `Funcs_Qubo_MaxCut` | Gset/Max-Cut import — natively unconstrained, no penalty needed |
 | `Funcs_Qubo_MpsImport` | MPS/MIPLIB import — pure set packing only, rejects anything lossy |
@@ -149,9 +207,11 @@ Runnable scripts in the same folder:
 | Script | Purpose |
 |---|---|
 | `Skript_Solve_Random_QUBO.py` | Demo of the multi-start mode: several start vectors, `num_MC` trials each, with the visualiser and CSV output |
-| `Skript_Solve_Gset.py` | Max-Cut on Gset — `num_MC` and `T` derived from measurements, not hand-set |
-| `Skript_Solve_MIPLIB.py` | MIPLIB set packing, with a `--probe` temperature grid |
+| `Skript_Solve_Gset.py` | Max-Cut on Gset — `num_MC` and `T` from measurements. `--schedule sigma` plus a `--c-start`/`--c-end` grid for the window matrix, `--offset-sweep` for the E_Offset |
+| `Skript_Solve_MIPLIB.py` | MIPLIB set packing — `--probe` temperature grid, `--cool T_hi:T_lo` windows, `--offset` |
 | `Bench_Performance.py` | The nine benchmark blocks behind [Performance](docs/performance.md) |
+| `Bench_Diagnostics.py` | One instrumented run: admissible-set size, blocked share, displacement against flips, how much of the problem the chain ever touches |
+| `Test_Sigma_Schedule.py` | σ against brute force over all `n·2ⁿ` directed edges (n ≤ 10), plus the schedule shapes |
 | `Test_Compare_Reference.py` | Verification against the reference library (needs it present) |
 
 ## Requirements
@@ -196,13 +256,28 @@ visualiser. Every parameter is in the
 [Parameter reference](docs/configuration.md); the two that decide whether a run
 works at all are in [Tuning](docs/tuning.md).
 
-Or reproduce a published benchmark directly:
+### Reproducing the table
+
+Every row above, with the exact flags. The instances download on first use.
 
 ```bash
 cd Code
-python Skript_Solve_Gset.py --instances G1,G11,G14 --steps 100000
-python Skript_Solve_MIPLIB.py --instance cdc7-4-3-2 --probe
+# Gset — the sigma schedule, budget scaled to n
+python Skript_Solve_Gset.py --instances G1,G11,G14,G22,G32 --steps 30000 \
+       --schedule sigma --c-start 0.5 --c-end 0.05
+python Skript_Solve_Gset.py --instances G55,G60 --steps 100000 \
+       --schedule sigma --c-start 0.5 --c-end 0.05
+python Skript_Solve_Gset.py --instances G70,G81 --steps 300000 \
+       --schedule sigma --c-start 0.5 --c-end 0.05
+
+# MIPLIB set packing — constant T, E_Offset on
+python Skript_Solve_MIPLIB.py --instance cdc7-4-3-2 --steps 1000000 --offset 0.6
 ```
+
+The `--c-start/--c-end` window is given explicitly because the built-in
+defaults (`0.3 / 0.11`) were calibrated at 30 000 steps on a different grid
+and land one cut lower on G1 — within noise, but the table should be
+reproducible exactly rather than approximately.
 
 ## License
 

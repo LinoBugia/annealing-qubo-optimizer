@@ -38,56 +38,60 @@ it does not track `n`: G70 has 10 000 variables but fewer terms than G1 with
 | G70 | 10 000 | 9 999 | 2.0 | 280 KB | 800 MB |
 | G81 | 20 000 | 40 000 | 4.0 | 1.04 MB | 3.20 GB |
 
-Random starting points, no warm start, no problem-specific moves. `num_MC` is
-derived from the [efficiency plateau](performance.md#monte-carlo-trials-batching-and-where-it-stops-paying)
-and `T` from the [scan correction](tuning.md#temperature-correct-for-the-scan) — neither
-is hand-tuned per instance.
+Random starting points, no warm start, no problem-specific moves. `num_MC`
+comes from the [efficiency plateau](performance.md#monte-carlo-trials-batching-and-where-it-stops-paying)
+and the temperature from σ ([Tuning](tuning.md)); neither is hand-tuned per
+instance. Budget is `steps ∝ n`, which is why the step counts differ.
 
-| Instance | `num_MC` | cut found | best known | % | time |
-|---|---|---|---|---|---|
-| G1 | 188 | 11 591 | 11 624 | **99.72** | 186 s |
-| G11 | 188 | 562 | 564 | **99.65** | 190 s |
-| G14 | 188 | 3 038 | 3 064 | **99.15** | 192 s |
-| G22 | 75 | 13 154 | 13 359 | 98.47 | 180 s |
-| G32 | 75 | 1 388 | 1 410 | 98.44 | 170 s |
-| G55 | 30 | 9 983 | 10 299 | 96.93 | 163 s |
-| G60 | 21 | 13 739 | 14 188 | 96.84 | 155 s |
-| G70 | 15 | 9 173 | 9 591 | 95.64 | 147 s |
-| G81 | 8 | 13 402 | 14 060 | 95.32 | 155 s |
+| Instance | `num_MC` | steps | cut found | best known | % | time |
+|---|---|---|---|---|---|---|
+| G1 | 188 | 30 000 | 11 624 | 11 624 | **100.00** | 117 s |
+| G11 | 188 | 30 000 | 560 | 564 | 99.29 | 115 s |
+| G14 | 188 | 30 000 | 3 055 | 3 064 | **99.71** | 108 s |
+| G22 | 75 | 30 000 | 13 317 | 13 359 | **99.69** | 105 s |
+| G32 | 75 | 30 000 | 1 376 | 1 410 | 97.59 | 120 s |
+| G55 | 30 | 100 000 | 10 189 | 10 299 | 98.93 | 315 s |
+| G60 | 21 | 100 000 | 13 984 | 14 188 | 98.56 | 315 s |
+| G70 | 15 | 300 000 | 9 373 | 9 591 | 97.73 | 443 s |
+| G81 | 8 | 300 000 | 13 658 | 14 060 | 97.14 | 461 s |
 
-All nine ran at a flat 100 000 steps, which is 125 sweeps for G1 but only 5
-for G81 — see [Step budget](tuning.md#step-budget-it-must-scale-with-n). Re-running the
-four large instances at 60 sweeps each (`steps = 60·n`) separates a
-measurement artefact from a real deficit:
+Mean 98.74 %. One run per cell, one seed. Against the previous configuration —
+a flat 100 000 steps and the scan-correction schedule — the mean was 97.80 %
+and G1 stood at 99.72 %.
 
-| Instance | sweeps before → after | % before | % after |
+**Two things the variable count hides.** Budget is one: 100 000 steps is 125
+sweeps for G1 and 5 for G81, and G81 gains 1.8 points from budget alone once
+that is fixed. Structure is the other:
+
+| Instance | components | isolated vars | effective n |
 |---|---|---|---|
-| G55 | 20 → 60 | 96.93 | 96.93 |
-| G60 | 14 → 60 | 96.84 | 96.84 |
-| G70 | 10 → 60 | 95.64 | 95.73 |
-| G81 | 5 → 60 | 95.32 | **97.61** |
+| G1, G11, G14, G22, G32, G81 | 1 | 0 | = n |
+| G55 | 32 | 31 | 4 969 |
+| G60 | 45 | 43 | 6 957 |
+| **G70** | **1 598** | **1 354** | **8 646** |
 
-**G81 was genuinely starved** and gains 2.3 points once fed. **G55 and G60 do
-not move at all** despite 3–4× the steps, so for the mid-size sparse instances
-the deficit is *not* the step budget — and there is no confirmed explanation
-for it here. The untested candidate is the number of independent
-chains, which falls from 188 to 8 as n grows because `num_MC·n` is held on the
-[efficiency plateau](performance.md#monte-carlo-trials-batching-and-where-it-stops-paying);
-chain count and instance size are confounded in this table and were never
-varied independently.
+G70 is not one 10 000-variable problem but 1 598 independent ones, 1 354 of
+its variables affect no edge, and a single chain accepts one flip per step
+across the whole vector — so every component competes for the same budget.
+`load_gset` reports this in `info`. Component-wise decomposition would be the
+obvious fix and is not implemented.
 
-Graph *degree*, which one might expect to matter through the ΔE spectrum, does
-not separate the results at all: G1 (degree 48) and G11 (degree 4) both land at
-~99.7%. That hypothesis was tested and failed.
+That does **not** explain G55 and G60, where under 1 % of variables are
+isolated and the results still plateau. The untested candidate there is the
+number of independent chains, which falls from 188 to 8 as `n` grows because
+`num_MC·n` is held on the efficiency plateau — chain count and instance size
+are confounded in this table and were never varied independently.
+
+Graph *degree* does not separate the results: G1 (degree 48) and G11
+(degree 4) both land near 99.5 %. That hypothesis was tested and failed.
 
 Best-known values are compiled from
 [this benchmark repo](https://github.com/0816keisuke/max-cut-problem-benchmark)
-(tracing back to Stanford's Gset page and the Toshiba SBM benchmark), G81 from
-[arXiv:2505.18508](https://arxiv.org/abs/2505.18508) where it is reported as
-proven optimal. **These values drift** — a new G63 record was published in
-October 2025 — so treat the table in `Skript_Solve_Gset.py` as a snapshot, not
-a constant. Sources disagree on G55 (10 299 vs 10 116); the higher, less
-flattering value is used.
+(tracing to Stanford's Gset page and the Toshiba SBM benchmark), G81 from
+[arXiv:2505.18508](https://arxiv.org/abs/2505.18508). **These values drift** —
+a new G63 record appeared in October 2025 — so treat the table in
+`Skript_Solve_Gset.py` as a snapshot. Sources disagree on G55 (10 299 vs
+10 116); the higher, less flattering value is used.
 
 ## MIPLIB — set packing
 
@@ -136,19 +140,18 @@ returned exactly 289.
 
 ## What the two cases show
 
-The difference between 99.7% and 94.1% is the **ΔE spectrum**, not the size
-or the difficulty. Max-Cut has real-valued, spread-out ΔE, so temperature can
-actually sort moves and the useful range is a broad plateau (on G1 anything
-from 0.4 to 1.2 works). Unweighted set packing collapses ΔE onto `{−1, +1, +3,
-…}` with a uniform `+1` barrier, leaving temperature nothing to sort — the
-workable window shrank to 0.15–0.18, and outside it the run either froze at the
-greedy value or turned into a random walk.
+The gap between 100 % and 94 % is the **ΔE spectrum**, not size or difficulty.
+Max-Cut has spread-out ΔE, so temperature can sort moves and the useful range
+is broad. Unweighted set packing collapses ΔE onto `{−1, +1, +3, …}` with a
+uniform `+1` barrier, leaving temperature nothing to sort — the workable
+window shrank to 0.15–0.18, and outside it the run either froze at the greedy
+value or became a random walk. Details in [Tuning](tuning.md).
 
-A rough suitability checklist, in the order the evidence supports it:
+Suitability, in the order the evidence supports it:
 
 1. **Natively unconstrained** — penalties create two competing energy scales.
-2. **Weighted, spread-out coefficients** — a degenerate ΔE spectrum starves
-   the Metropolis criterion.
-3. **Solution density near 50%** — at 2.6% (as in set packing) single flips
-   are almost always meaningless.
-4. **Budget `steps ∝ n`** — otherwise large instances are merely starved.
+2. **Weighted, spread-out coefficients** — a degenerate spectrum starves the
+   Metropolis criterion.
+3. **Solution density near 50 %** — at 2.6 %, single flips are almost always
+   meaningless.
+4. **Budget `steps ∝ n`**, and check the component structure first.

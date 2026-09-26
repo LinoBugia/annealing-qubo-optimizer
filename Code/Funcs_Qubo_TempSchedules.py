@@ -29,7 +29,7 @@ def generate_cooling_schedule(cooling_param: list, steps: int,
     Build the (steps,) temperature array from cooling_param.
 
     Types: constant, linear, rising, logarithmic, logarithmic_step,
-           exponential, geometric, hyperbolic, da_gp.
+           exponential, geometric, hyperbolic, sigma, da_gp.
     imbalance_correction: centre the per-side medians of the dE vector before
     taking quantiles (currently disabled in the reference — toggled here).
 
@@ -70,6 +70,30 @@ def generate_cooling_schedule(cooling_param: list, steps: int,
         elif kind == "geometric":
             T0, alpha = cooling_param[1], cooling_param[2]
             T.append(T0 * alpha ** (t - 1))
+        elif kind == "sigma":
+            # Temperatures in units of sigma = std(dE) of THIS instance, so
+            # the same schedule transfers between problems. An absolute T does
+            # not: it carries the scale of the coefficients, and getting it
+            # wrong is the single most expensive mistake this engine allows.
+            #
+            # The cap at 0.5*sigma is deliberate. A uniformly random start
+            # state IS the equilibrium at T = infinity, so a hotter phase
+            # cannot reach anything a random restart does not already give,
+            # and above sigma the DA scan has no advantage over a random walk.
+            if step == 1:
+                _calibrate_sigma(cooling_param)
+            T_hi, T_lo, form, K = (cooling_param[6], cooling_param[7],
+                                   cooling_param[8], cooling_param[9])
+            u = (t - 1) / max(steps_eff - 1, 1)             # 0 .. 1
+            if form == "linear":
+                T.append(T_hi + (T_lo - T_hi) * u)
+            elif form == "staircase":
+                # geometric levels held constant, so each level can be checked
+                # for equilibrium and its length tuned to the relaxation time
+                lev = min(int(u * K), K - 1)
+                T.append(T_hi * (T_lo / T_hi) ** (lev / max(K - 1, 1)))
+            else:                                            # geometric
+                T.append(T_hi * (T_lo / T_hi) ** u)
         elif kind == "hyperbolic":
             T0 = cooling_param[1]
             T.append(T0 / t)
@@ -100,6 +124,111 @@ def generate_cooling_schedule(cooling_param: list, steps: int,
               "cooling steps -> %d steps total, T_end=%.4g"
               % (h, T[0], steps_eff, len(T), T[-1]))
     return T
+
+
+def _calibrate_sigma(cooling_param: list):
+    """
+    Fill the "sigma" contract in place and report it.
+
+        [0] "sigma"
+        [1] c_start   (default 0.3)   T_start = c_start * sigma
+        [2] c_end     (default 0.11)  T_end   = c_end   * sigma
+        [3] form      "geometric" (default) | "staircase" | "linear"
+        [4] sigma     std(dE) of this instance — the SOLVER fills this, the
+                      same way it fills slot 2 of "da_gp" with the dE vector
+        [5] K         number of levels for "staircase" (default 10)
+        [6] T_start cache  [7] T_end cache  [8] form cache  [9] K cache
+
+    DOMAIN OF VALIDITY — measured, and narrower than it looks. sigma is the
+    right unit only when the dE spectrum is HOMOGENEOUS:
+
+        instance   n       T_opt   sigma     T_opt/sigma   spread(q50/min)
+        G1         800     0.80      6.92    0.116          5
+        G22       2000     0.60      4.47    0.134          3
+        cdc7-4-3-2 11811   0.18    420.00    0.0004        15
+
+    G1 and G22 agree to 16 %, and c_start=0.5 / c_end=0.05 brackets their
+    measured optimum. cdc7 is off by a factor of 300: the defaults would put
+    T_end at 0.05*420 = 21 against a measured optimum of 0.18, i.e. **117x too
+    hot** — the exact failure that cost six wasted runs on another instance.
+
+    Why: cdc7 is a penalty encoding with 210 conflicts per variable, so sigma
+    is dominated by constraint-violating directions the chain never takes. It
+    lives on the feasible manifold where dE is +-1, while sigma measures the
+    whole spectrum including the half that is never used.
+
+    So sigma does NOT dissolve the spread question, it reproduces it. Use it
+    where spread = q50(dE+)/min(dE+) is small (1..5, Max-Cut and friends); on
+    a gapped spectrum keep the scan correction T = dE_min/ln(n/p) instead.
+    A sigma taken over only the reachable part of the spectrum would be the
+    principled fix and has not been built.
+
+    WHERE THE DEFAULTS COME FROM — measured on G1 and G22, 10 000 steps,
+    seed 17, a 5x4 and a 3x4 window grid (43 runs). Mean cut per c_end,
+    pooled over every c_start in the grid:
+
+        c_end    0.01    0.02    0.05    0.10    0.12    0.15    0.20
+        G1      11595   11613   11607   11621   11621   11607   11588
+        G22     13183   13210   13233   13238   13234   13207   13132
+
+    Unimodal on both, peaking at c_end ~ 0.10..0.12 — which is exactly the
+    measured constant-T optimum, T_opt/sigma = 0.116 on G1 and 0.134 on G22.
+    So the rule is: **cool down TO the optimal temperature and stop there, do
+    not cool through it.** The originally guessed 0.05 was a factor of two too
+    cold, and 0.01 costs ~30 cut on G1 and ~55 on G22.
+
+    c_start is far less critical: 0.15 through 0.5 all perform within noise.
+    Only 0.1 collapses, and that is the row that STARTS below T_opt — the
+    lower edge sits exactly where it should.
+
+    Best results from that grid: G1 11 624, which MATCHES the best known
+    value, and G22 13 256 (99.23 %), against 11 591 and 13 154 documented in
+    README.md at ten times the step count.
+
+    Calibrated on two Max-Cut instances. Two points, one problem class, one
+    seed per cell — treat 0.3/0.11 as a measured starting point, not a
+    constant of nature.
+
+    Why a geometric sweep at all: the DA speed-up over a single-flip random walk depends
+    only on T/sigma. Measured for n <= 7, half the gain is left at 0.37 sigma,
+    90 % at 0.16 sigma, and it saturates (factor n) below 0.07 sigma. A
+    geometric curve from 0.5 to 0.05 sigma spends about half its budget above
+    0.16 sigma and 30 % below 0.1 sigma; a linear one would spend 75 % and
+    11 %, i.e. most of the run where the scan buys nothing.
+    """
+    c_start = cooling_param[1] if len(cooling_param) > 1 else None
+    c_end = cooling_param[2] if len(cooling_param) > 2 else None
+    form = cooling_param[3] if len(cooling_param) > 3 else None
+    sigma = cooling_param[4] if len(cooling_param) > 4 else None
+    K = cooling_param[5] if len(cooling_param) > 5 else None
+
+    c_start = 0.3 if c_start is None else float(c_start)
+    c_end = 0.11 if c_end is None else float(c_end)
+    form = "geometric" if form is None else str(form)
+    K = 10 if K is None else max(1, int(K))
+    if form not in ("geometric", "staircase", "linear"):
+        raise ValueError("sigma schedule: unknown form %r "
+                         "(geometric | staircase | linear)" % (form,))
+    if sigma is None:
+        raise ValueError(
+            "sigma schedule: slot 4 (sigma) is empty. qubo_min_solver fills "
+            "it from the problem; when calling generate_cooling_schedule "
+            "directly, pass it as [\"sigma\", c_start, c_end, form, sigma].")
+    sigma = float(sigma)
+    if not np.isfinite(sigma) or sigma <= 0.0:
+        raise ValueError("sigma schedule: sigma must be finite and positive, "
+                         "got %r — a constant PBF has no energy scale" % sigma)
+
+    while len(cooling_param) < 10:
+        cooling_param.append(None)
+    cooling_param[6] = c_start * sigma
+    cooling_param[7] = c_end * sigma
+    cooling_param[8] = form
+    cooling_param[9] = K
+    print("   sigma schedule: sigma=%.6g -> T_start=%.6g (%.3g sigma), "
+          "T_end=%.6g (%.3g sigma), form=%s%s"
+          % (sigma, cooling_param[6], c_start, cooling_param[7], c_end, form,
+             ", %d levels" % K if form == "staircase" else ""))
 
 
 def _calibrate_da_gp(cooling_param: list, imbalance_correction: bool):

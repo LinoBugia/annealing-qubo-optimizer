@@ -119,3 +119,66 @@ def csr_from_dense(A, threshold: float = 0.0):
     if threshold > 0.0:
         A = np.where(np.abs(A) >= threshold, A, 0.0)
     return _sp.csr_matrix(A)
+
+
+def delta_e_sigma(A, b, exact: bool = True, samples: int = 8, seed: int = 0):
+    """
+    sigma = std of dE over uniformly random states AND uniformly random flips.
+
+    This is the natural unit of a QUBO's energy scale. Temperatures expressed
+    as multiples of sigma transfer between instances; absolute temperatures do
+    not, because they carry the scale of the coefficients.
+
+    Exact, via Walsh coefficients. With x_i = (1+s_i)/2 and chi_U = prod_{i in
+    U} s_i, a pseudo-Boolean function E(x) = sum_S a_S prod_{i in S} x_i has
+
+        ehat(U) = sum_{S superset U} a_S * 2^(-|S|)
+
+    Flipping bit k negates chi_U exactly when k is in U, so
+    dE_k(s) = -2 * sum_{U containing k} ehat(U) chi_U, and since the chi_U are
+    orthonormal under the uniform measure,
+
+        E[dE_k^2] = 4 * sum_{U containing k} ehat(U)^2
+        sigma^2   = (1/n) sum_k E[dE_k^2] = (4/n) * sum_U |U| * ehat(U)^2
+
+    The mean of dE over directed edges is zero by symmetry (the reverse of
+    every edge carries -dE), so sigma^2 is the raw second moment.
+
+    For a QUBO the sum collapses to degree 2. With Asym = A + A^T:
+
+        ehat_i  = b_i/2 + rowsum(Asym)_i / 4
+        ehat_ij = Asym[i,j] / 4
+        sigma^2 = (4/n) * [ sum_i ehat_i^2 + sum_{i != j} Asym[i,j]^2 / 16 ]
+
+    Cost is one row sum and one sum of squares over the nonzeros — linear in
+    the number of monomials, and it never touches the constant term c.
+
+    exact=False uses the unbiased estimator sigma^2 ~ mean_k dE_k(x)^2 over
+    `samples` uniform random states. It exists as an independent control: the
+    two agree to ~1/sqrt(samples*n) and disagreeing means the Walsh path has a
+    bug. Test_Sigma_Schedule.py checks both against brute force for n <= 10.
+    """
+    b = np.asarray(b, dtype=np.float64).ravel()
+    n = b.size
+    if n == 0:
+        return 0.0
+
+    if not exact:
+        rng = np.random.default_rng(seed)
+        X = (rng.random((samples, n)) < 0.5).astype(np.int8)
+        dE = eval_delta_energy(A, b, X)
+        return float(np.sqrt((dE.astype(np.float64) ** 2).mean()))
+
+    if is_sparse(A):
+        Asym = (A + A.T).tocsr()
+        row = np.asarray(Asym.sum(axis=1)).ravel()
+        sq_off = float(Asym.multiply(Asym).sum())       # diagonal is zero
+    else:
+        Ad = np.asarray(A, dtype=np.float64)
+        Asym = Ad + Ad.T
+        row = Asym.sum(axis=1)
+        sq_off = float((Asym ** 2).sum() - (np.diag(Asym) ** 2).sum())
+
+    ehat_lin = 0.5 * b + 0.25 * row
+    sigma2 = (4.0 / n) * (float((ehat_lin ** 2).sum()) + sq_off / 16.0)
+    return float(np.sqrt(max(sigma2, 0.0)))

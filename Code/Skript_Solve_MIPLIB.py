@@ -86,13 +86,23 @@ def greedy_packing(A, info):
     return x
 
 
-def run(A, b, cc, info, x0, cooling, steps, mc, seed=11, recompute_every=4096):
-    """One run; returns (best_state, selected_count, feasible, seconds)."""
+def run(A, b, cc, info, x0, cooling, steps, mc, seed=11, recompute_every=4096,
+        offset=0.0, kick=None):
+    """
+    One run; returns (best_state, selected_count, feasible, seconds).
+
+    `offset` is the E_Offset increment on a fully rejected step. It defaulted
+    to 0 here for the whole history of this script, which meant the kernel's
+    own escape was switched off on an instance where 11.7 % of steps find
+    nothing admissible. Measured worth on cdc7: +3, roughly a doubling of the
+    budget, with 0.05 and 0.6 tied and 0.6 the tighter measurement.
+    """
     t0 = time.perf_counter()
     with contextlib.redirect_stdout(io.StringIO()):
         Xm, Mins, _, _ = qubo_min_solver(
             A, b, cc, steps=steps, num_MC=mc, cooling_param=list(cooling),
             initial_varAssignements_pre=x0, save_addinfo=True,
+            offset_increase_rate=offset, kick=kick,
             seed_rand=seed, recompute_every=recompute_every)
     dt = time.perf_counter() - t0
     k = int(np.argmin(Mins))
@@ -111,6 +121,23 @@ def main():
     ap.add_argument("--mc", type=int, default=16)
     ap.add_argument("--temp", type=float, default=0.18)
     ap.add_argument("--penalty", type=float, default=None)
+    ap.add_argument("--offset", type=float, default=0.0,
+                    help="E_Offset increment per fully rejected step. "
+                         "0.6 is the measured best on cdc7 (+3 over off).")
+    ap.add_argument("--kick", default=None,
+                    help="sigma-calibrated offset kick: 'w,c_low,c_wide,"
+                         "p_none/p_low/p_wide/p_band' or just 'on' for the "
+                         "defaults. sigma is taken at the START STATE, not "
+                         "from the Walsh formula — on a penalty encoding the "
+                         "latter is dominated by directions never taken.")
+    ap.add_argument("--kick-phases", default=None,
+                    help="offset phase plan, 'frac:mode,...' e.g. "
+                         "'0.5:none,0.25:wide,0.25:low'. Modes: none, low, "
+                         "wide, band. Implies --kick.")
+    ap.add_argument("--cool", default=None,
+                    help="geometric cooling instead of constant T, as "
+                         "'T_hi:T_lo' or a comma-separated list of windows. "
+                         "cdc7 has only ever been run at constant T.")
     ap.add_argument("--probe", action="store_true",
                     help="short runs over a T grid instead of the main run")
     ap.add_argument("--seed", type=int, default=11)
@@ -147,14 +174,70 @@ def main():
         print("  T       selected  feasible   s")
         for T in (0.03, 0.06, 0.10, 0.15, 0.18, 0.22, 0.30, 0.50):
             _, sel, feas, dt = run(A, b, cc, info, xg, ["constant", T],
-                                   4000, args.mc, args.seed)
+                                   4000, args.mc, args.seed,
+                                   offset=args.offset, kick=kick_cfg)
             print("  %-6.2f  %5d    %-8s  %5.1f" % (T, sel, feas, dt))
+        return
+
+    kick_cfg = None
+    if args.kick is None and args.kick_phases is not None:
+        args.kick = "on"
+    if args.kick is not None:
+        # sigma AT THE START STATE, not the Walsh sigma. The latter averages
+        # over uniformly random states, which for a penalty encoding are all
+        # deeply infeasible: it reads 420 on cdc7 against 16.7 at the feasible
+        # packing the chain actually occupies. With 420, even c_low would be a
+        # +42 offset and the kick would accept everything.
+        dE_k = qa3.eval_delta_energy(A, b, xg).astype(float)
+        sig_local = float(np.sqrt((dE_k ** 2).mean()))
+        kick_cfg = {"sigma": sig_local}
+        if args.kick != "on":
+            f = args.kick.split(",")
+            if f[0]:
+                kick_cfg["w"] = int(f[0])
+            if len(f) > 1:
+                kick_cfg["c_low"] = float(f[1])
+            if len(f) > 2:
+                kick_cfg["c_wide"] = float(f[2])
+            if len(f) > 3:
+                kick_cfg["p"] = tuple(float(v) for v in f[3].split("/"))
+        if args.kick_phases is not None:
+            ph = []
+            for part in args.kick_phases.split(","):
+                f, m = part.split(":")
+                ph.append((float(f), m.strip()))
+            kick_cfg["phases"] = ph
+        print("kick on: sigma(start state)=%.3f, Walsh sigma=%.1f (not used) | %s"
+              % (sig_local, qa3.delta_e_sigma(A, b),
+                 {k: v for k, v in kick_cfg.items() if k != "sigma"}))
+
+    if args.cool is not None:
+        # The rule that won on Gset was "cool down TO the optimal temperature
+        # and stop, do not cool through it". T_opt is 0.18 here, measured at
+        # constant T; whether the rule transfers to a gapped spectrum is
+        # exactly what this sweep asks. sigma is NOT usable on this instance
+        # (T_opt/sigma = 0.0004 against 0.12 on Max-Cut), so the windows are
+        # absolute.
+        print("\ngeometric cooling sweep, %d steps, num_MC=%d "
+              "(constant T=%g reference), E_Offset=%g\n"
+              % (args.steps, args.mc, args.temp, args.offset))
+        print("  T_hi    T_lo   selected  feasible      s")
+        for spec in args.cool.split(","):
+            hi, lo = (float(v) for v in spec.split(":"))
+            alpha = (lo / hi) ** (1.0 / max(args.steps - 1, 1))
+            x, sel, feas, dt = run(A, b, cc, info, xg,
+                                   ["geometric", hi, alpha],
+                                   args.steps, args.mc, args.seed,
+                                   offset=args.offset, kick=kick_cfg)
+            print("  %-6.3f  %-6.3f %6d     %-8s %6.0f"
+                  % (hi, lo, sel, feas, dt), flush=True)
         return
 
     print("\nmain run: %d steps, num_MC=%d, constant T=%g"
           % (args.steps, args.mc, args.temp))
     x, sel, feas, dt = run(A, b, cc, info, xg, ["constant", args.temp],
-                           args.steps, args.mc, args.seed)
+                           args.steps, args.mc, args.seed, offset=args.offset,
+                           kick=kick_cfg)
     print("result: %d selected, feasible=%s, %.1f s (%.2f ms/step)"
           % (sel, feas, dt, 1e3 * dt / args.steps))
     if bk is not None:

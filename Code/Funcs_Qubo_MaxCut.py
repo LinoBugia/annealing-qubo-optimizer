@@ -82,13 +82,35 @@ def cut_value(x, W):
 
 
 def load_gset(path):
-    """File -> (A, b, c, info)."""
+    """
+    File -> (A, b, c, info).
+
+    `info` also carries the graph's component structure, because for Max-Cut
+    it changes what the instance actually is. A variable of degree 0 cannot
+    affect the cut at all, and two components are two independent problems —
+    but a single DA chain accepts one flip per step across the whole vector,
+    so every component competes for the same budget. G70 is the extreme case:
+    10 000 variables, of which 1 354 appear in no edge, and 1 598 separate
+    components. Its nominal size is not its effective one.
+
+    Reported: `components`, `isolated` (degree-0 variables), `largest`
+    (biggest component) and `effective_n` = n - isolated.
+    """
     if not os.path.exists(path):
         raise FileNotFoundError(path)
     W, n, m = read_gset(path)
     A, b, c = maxcut_to_qubo(W)
     deg = np.diff(W.indptr)
+    iso = int((deg == 0).sum())
+    try:
+        from scipy.sparse.csgraph import connected_components
+        ncomp, lab = connected_components(W, directed=False)
+        largest = int(np.bincount(lab).max())
+    except ImportError:                                 # scipy.csgraph optional
+        ncomp, largest = -1, -1
     return A, b, c, dict(W=W, n=n, m=m, nnz=int(W.nnz),
                          avg_degree=float(W.nnz) / n,
                          weighted=bool(np.any(W.data != 1.0)),
-                         min_degree=int(deg.min()), max_degree=int(deg.max()))
+                         min_degree=int(deg.min()), max_degree=int(deg.max()),
+                         components=int(ncomp), isolated=iso,
+                         largest=largest, effective_n=n - iso)
