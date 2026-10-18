@@ -123,11 +123,11 @@ pairs, 29.8 MB as CSR where dense would be 1.1 GB):
 
 | | selected | of best known |
 |---|---|---|
-| greedy baseline | 232 | 75.6% |
-| after 4 000 steps (5 s) | 263 | 85.7% |
-| after 200 000 steps (14 min) | 287 | 93.5% |
-| after a further 600 000 steps | 289 | **94.1%** |
-| best known (open instance) | 307 | |
+| greedy baseline | 232 | 69.7% |
+| after 4 000 steps (5 s) | 263 | 79.0% |
+| after 200 000 steps (14 min) | 287 | 86.2% |
+| after a further 600 000 steps | 289 | **86.8%** |
+| best known (open instance, MIPLIB 2026; 307 until 2025) | 333 | |
 
 Feasibility is verified against the original MPS structure, not against the
 QUBO. **This is the hard case**, and the reason is structural rather than
@@ -140,7 +140,7 @@ returned exactly 289.
 
 ## What the two cases show
 
-The gap between 100 % and 94 % is the **ΔE spectrum**, not size or difficulty.
+The gap between 100 % and 87 % is the **ΔE spectrum**, not size or difficulty.
 Max-Cut has spread-out ΔE, so temperature can sort moves and the useful range
 is broad. Unweighted set packing collapses ΔE onto `{−1, +1, +3, …}` with a
 uniform `+1` barrier, leaving temperature nothing to sort — the workable

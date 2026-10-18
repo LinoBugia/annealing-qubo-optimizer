@@ -14,7 +14,7 @@ On a 2024 laptop (Apple M4, 24 GB):
 | **G22** — Max-Cut | 2 000 | 19 990 | 488 KB | 30 000 | 1.8 min | 13 317 of 13 359 · **99.69%** |
 | **G70** — Max-Cut | 10 000 | 9 999 | 280 KB | 300 000 | 7.4 min | 9 373 of 9 591 · **97.73%** |
 | **G81** — Max-Cut | 20 000 | 40 000 | 1.04 MB | 300 000 | 7.7 min | 13 658 of 14 060 · **97.14%** |
-| **cdc7-4-3-2** — set packing | 11 811 | 1 240 000 | 29.8 MB | 1 000 000 | 31 min | 289 of 307 · **94.14%** |
+| **cdc7-4-3-2** — set packing | 11 811 | 1 240 000 | 29.8 MB | 1 000 000 | 31 min | 289 of 333 · **86.79%** |
 
 Nine Gset instances average **98.74 %** of the best published value, and G1
 reaches it exactly. Each cell is one run at one seed, reproducible with the
@@ -43,8 +43,9 @@ point. Beyond that, the ceiling is RAM rather than the algorithm. Details in
   building the QUBO, calibrating the schedule, every step, final evaluation.
   One process, one core's worth of numpy.
 - **reached** is against the best published value. `cdc7-4-3-2` is an **open**
-  MIPLIB 2017 instance with no proven optimum, and its feasibility is checked
-  against the original MPS rows, not against the QUBO.
+  MIPLIB 2017 instance with no proven optimum — the best known moved from 307
+  to 333 in 2026 — and its feasibility is checked against the original MPS
+  rows, not against the QUBO.
 
 The step counts differ deliberately. One accepted flip per step means passes
 over the variables are `steps / n`, so a flat budget starves large instances:
